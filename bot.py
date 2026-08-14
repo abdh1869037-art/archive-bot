@@ -7,7 +7,7 @@ from datetime import datetime
 from template_handler import start_template_session, handle_template_photo, template_sessions
 
 # --- الإعدادات الأساسية ---
-API_TOKEN = '8951535425:AAHUWdQgR36yjvIq-6NdUt1sIDrreYXGAuE'
+API_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '8951535425:AAHUWdQgR36yjvIq-6NdUt1sIDrreYXGAuE')
 bot = telebot.TeleBot(API_TOKEN)
 
 # --- ملف حفظ الرموز ---
