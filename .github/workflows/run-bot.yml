@@ -5,9 +5,13 @@ on:
     - cron: '0 */5 * * *'
   workflow_dispatch:
 
+# لا نلغي المهمة السابقة تلقائياً، حتى تحصل على فرصة الحفظ النهائي عند انتهاء دورة التشغيل.
 concurrency:
   group: telegram-bot
-  cancel-in-progress: true
+  cancel-in-progress: false
+
+permissions:
+  contents: write
 
 jobs:
   run-bot:
@@ -17,6 +21,16 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Pull latest repository state
+        run: git pull --ff-only origin "${GITHUB_REF_NAME:-main}"
+
+      - name: Configure Git author
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -26,7 +40,41 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run bot
+      - name: Make persistence script executable
+        run: chmod +x scripts/persist-db.sh
+
+      - name: Run bot with periodic persistence
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        run: python3 bot.py
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          ./scripts/persist-db.sh --loop >"${RUNNER_TEMP}/archive-db-periodic.log" 2>&1 &
+          saver_pid=$!
+
+          cleanup() {
+            status=$?
+            trap - EXIT TERM INT
+            kill "$saver_pid" 2>/dev/null || true
+            wait "$saver_pid" 2>/dev/null || true
+            ./scripts/persist-db.sh >>"${RUNNER_TEMP}/archive-db-periodic.log" 2>&1 || true
+            exit "$status"
+          }
+          trap cleanup EXIT TERM INT
+
+          python3 bot.py
+
+      - name: Save database after bot stops (including cancellation)
+        if: ${{ always() }}
+        run: |
+          chmod +x scripts/persist-db.sh
+          ./scripts/persist-db.sh
+
+      - name: Upload persistence log
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: archive-db-persistence-log
+          path: ${{ runner.temp }}/archive-db-periodic.log
+          if-no-files-found: ignore
